@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lottery Draw — Spreadsheet Winner Picker</title>
+  <meta name="description" content="Upload an Excel or CSV file and draw a random winner with a slot-machine style reel. Everything runs locally in your browser." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%9F%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            display: ['Space Grotesk', 'Inter', 'ui-sans-serif', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
+          }
+        }
+      }
+    };
+  </script>
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background-color: #06070b;
+      background-image:
+        radial-gradient(70rem 45rem at 10% -12%, rgba(245, 158, 11, 0.10), transparent 60%),
+        radial-gradient(55rem 40rem at 96% -4%, rgba(99, 102, 241, 0.09), transparent 60%),
+        radial-gradient(48rem 42rem at 50% 118%, rgba(16, 185, 129, 0.06), transparent 62%);
+      background-attachment: fixed;
+    }
+
+    .bg-grid {
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+      background-size: 56px 56px;
+      -webkit-mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, #000 25%, transparent 78%);
+      mask-image: radial-gradient(ellipse 85% 65% at 50% 0%, #000 25%, transparent 78%);
+    }
+
+    .scroll-slim {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+    }
+    .scroll-slim::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scroll-slim::-webkit-scrollbar-track { background: transparent; }
+    .scroll-slim::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.10);
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background-clip: padding-box;
+    }
+    .scroll-slim::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.20); background-clip: padding-box; }
+
+    /* Status dots */
+    .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      flex: none;
+      border-radius: 9999px;
+    }
+    .dot-idle { background: #64748b; }
+    .dot-ready { background: #34d399; box-shadow: 0 0 10px rgba(52, 211, 153, 0.65); }
+    .dot-rolling { background: #fbbf24; box-shadow: 0 0 12px rgba(251, 191, 36, 0.85); animation: dot-pulse 0.9s ease-in-out infinite; }
+    .dot-error { background: #fb7185; box-shadow: 0 0 10px rgba(251, 113, 133, 0.6); }
+    .dot-info { background: #fbbf24; box-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
+
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.8); }
+    }
+
+    /* Dropzone drag state */
+    #dropzone.drag-over {
+      border-color: rgba(251, 191, 36, 0.65);
+      background-color: rgba(251, 191, 36, 0.07);
+      box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.08), inset 0 0 40px rgba(251, 191, 36, 0.04);
+    }
+
+    /* Reel */
+    .reel-shell {
+      padding: 1px;
+      border-radius: 1rem;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.03) 32%, rgba(255, 255, 255, 0.09));
+      box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(0, 0, 0, 0.35);
+    }
+
+    .reel-inner {
+      position: relative;
+      overflow: hidden;
+      border-radius: calc(1rem - 1px);
+      background:
+        radial-gradient(120% 85% at 50% 50%, rgba(251, 191, 36, 0.045), transparent 70%),
+        linear-gradient(180deg, #090b10, #07090d);
+      box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.8);
+    }
+
+    .reel-inner::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      pointer-events: none;
+      background: repeating-linear-gradient(to bottom, transparent 0 71px, rgba(255, 255, 255, 0.035) 71px 72px);
+    }
+
+    .reel-mask {
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 21%, #000 79%, transparent 100%);
+      mask-image: linear-gradient(to bottom, transparent 0%, #000 21%, #000 79%, transparent 100%);
+    }
+
+    .reel-row {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      display: flex;
+      height: 72px;
+      align-items: center;
+      justify-content: center;
+      padding: 0 2.5rem;
+      transform: translate3d(0, -50%, 0);
+      will-change: transform, opacity;
+    }
+
+    .reel-text {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      color: #e2e8f0;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: clamp(0.82rem, 2.5vw, 1.08rem);
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      line-height: 1.4;
+      text-overflow: ellipsis;
+      text-shadow: 0 0 26px rgba(251, 191, 36, 0.12);
+      white-space: nowrap;
+    }
+
+    .reel-inner.locked {
+      animation: reel-lock 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    @keyframes reel-lock {
+      0% { box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.8); }
+      30% { box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.8), 0 0 55px rgba(251, 191, 36, 0.28); }
+      100% { box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.8); }
+    }
+
+    /* Draw button shimmer + glow */
+    .draw-btn:not(:disabled) {
+      animation: draw-glow 3.4s ease-in-out infinite;
+    }
+
+    @keyframes draw-glow {
+      0%, 100% { box-shadow: 0 12px 45px -12px rgba(251, 191, 36, 0.5); }
+      50% { box-shadow: 0 14px 55px -10px rgba(251, 191, 36, 0.7); }
+    }
+
+    .shimmer-sweep {
+      border-radius: inherit;
+      background: linear-gradient(110deg, transparent 22%, rgba(255, 255, 255, 0.5) 50%, transparent 78%);
+      transform: translateX(-110%);
+      animation: shimmer 3.8s ease-in-out infinite;
+    }
+
+    .draw-btn:disabled .shimmer-sweep { display: none; }
+
+    @keyframes shimmer {
+      0%, 55% { transform: translateX(-110%); }
+      100% { transform: translateX(110%); }
+    }
+
+    /* Checkbox */
+    .checkbox-box svg { opacity: 0; }
+    #removeWinner:checked + .checkbox-box {
+      border-color: #fbbf24;
+      background-color: #fbbf24;
+      box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
+    }
+    #removeWinner:checked + .checkbox-box svg { opacity: 1; }
+    #removeWinner:focus-visible + .checkbox-box {
+      outline: 2px solid rgba(251, 191, 36, 0.65);
+      outline-offset: 2px;
+    }
+    #removeWinner:disabled + .checkbox-box { opacity: 0.4; }
+    #removeWinner:disabled ~ span { opacity: 0.5; }
+
+    /* Result card */
+    .result-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    @keyframes pop-in {
+      0% { opacity: 0; transform: translateY(14px) scale(0.985); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .animate-pop { animation: pop-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+    /* Confetti */
+    .confetti-piece {
+      position: absolute;
+      top: -24px;
+      border-radius: 2px;
+      animation-name: confetti-fall;
+      animation-timing-function: cubic-bezier(0.25, 0.45, 0.55, 0.9);
+      animation-fill-mode: forwards;
+      opacity: 0.95;
+    }
+
+    @keyframes confetti-fall {
+      0% { transform: translate3d(0, -8vh, 0) rotate(0deg); opacity: 1; }
+      100% { transform: translate3d(var(--drift, 0px), 105vh, 0) rotate(760deg); opacity: 0; }
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-full font-sans text-slate-200 antialiased selection:bg-amber-400/30 selection:text-white">
+  <div class="pointer-events-none fixed inset-0 -z-10 bg-grid" aria-hidden="true"></div>
+
+  <div class="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+    <!-- Header -->
+    <header class="mb-7 flex flex-col justify-between gap-4 sm:mb-9 sm:flex-row sm:items-center">
+      <div class="flex items-center gap-3.5">
+        <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-amber-300 via-amber-400 to-amber-600 shadow-[0_10px_35px_-8px_rgba(251,191,36,.55)] ring-1 ring-inset ring-white/30">
+          <svg class="h-6 w-6 text-[#1c1305]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2Z" />
+            <path d="M13 5v2M13 17v2M13 11v2" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">Lottery Draw</h1>
+          <p class="mt-0.5 text-sm text-slate-400">Upload a sheet. Spin the reel. Crown a winner.</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-1.5 text-[11px] font-medium text-emerald-300">
+          <span class="relative flex h-1.5 w-1.5">
+            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"></span>
+            <span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+          </span>
+          100% local · nothing uploaded
+        </span>
+        <span class="inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.03] px-3 py-1.5 text-[11px] font-medium text-slate-400">
+          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+          XLSX · XLS · CSV
+        </span>
+      </div>
+    </header>
+
+    <main class="grid items-start gap-6 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
+      <!-- Left column -->
+      <div class="space-y-6">
+        <section class="rounded-3xl border border-white/[0.07] bg-[#0c0f16]/80 p-5 shadow-[0_25px_70px_-35px_rgba(0,0,0,.95)] backdrop-blur sm:p-6">
+          <div class="flex items-center gap-3">
+            <span class="grid h-7 w-7 place-items-center rounded-lg border border-amber-400/20 bg-amber-400/10 font-mono text-[11px] font-semibold text-amber-300">01</span>
+            <h2 class="font-display text-base font-semibold text-white">Load entries</h2>
+          </div>
+
+          <label id="dropzone" for="fileInput" class="group mt-4 flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.02] px-5 py-8 text-center outline-none transition-colors duration-200 hover:border-amber-400/50 hover:bg-amber-400/[0.04] focus-within:border-amber-400/60 focus-within:ring-2 focus-within:ring-amber-400/20">
+            <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" class="sr-only" />
+            <span class="grid h-12 w-12 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-slate-400 transition-colors duration-200 group-hover:text-amber-300">
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"/></svg>
+            </span>
+            <span>
+              <span class="block text-sm font-medium text-slate-200"><span id="dropTitle">Drop your file here</span> <span class="text-amber-400">or browse</span></span>
+              <span id="dropHint" class="mt-1 block text-[11px] text-slate-500">.xlsx, .xls or .csv · first sheet only</span>
+            </span>
+          </label>
+
+          <div id="fileStatus" class="mt-3 hidden">
+            <div class="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-emerald-400/20 bg-emerald-400/10 text-emerald-300">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-4"/></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p id="fileName" class="truncate text-sm font-medium text-slate-200">—</p>
+                <p id="fileMeta" class="mt-0.5 truncate text-[11px] text-slate-500"></p>
+              </div>
+              <button id="clearFileBtn" type="button" title="Remove file" class="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-500 transition hover:bg-white/5 hover:text-slate-200 disabled:opacity-40" aria-label="Remove file">
+                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-4 grid grid-cols-2 gap-2">
+            <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+              <p class="text-[10px] font-medium uppercase tracking-wider text-slate-500">Loaded</p>
+              <p class="mt-0.5 font-mono text-lg font-semibold text-white" id="loadedCount">0</p>
+            </div>
+            <div class="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+              <p class="text-[10px] font-medium uppercase tracking-wider text-slate-500">In pool</p>
+              <p class="mt-0.5 font-mono text-lg font-semibold text-amber-300" id="poolCount">0</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="overflow-hidden rounded-3xl border border-white/[0.07] bg-[#0c0f16]/80 shadow-[0_25px_70px_-35px_rgba(0,0,0,.95)] backdrop-blur">
+          <div class="flex items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
+            <div class="flex items-center gap-2">
+              <h2 class="font-display text-sm font-semibold text-white">Entry preview</h2>
+              <span id="previewCount" class="rounded-full bg-white/5 px-2 py-0.5 font-mono text-[10px] text-slate-400">0</span>
+            </div>
+            <span class="text-[10px] text-slate-600">joined with “ | ”</span>
+          </div>
+          <div id="previewScroll" class="scroll-slim max-h-[360px] overflow-y-auto p-2">
+            <ul id="previewList" class="space-y-0.5"></ul>
+            <div id="previewEmpty" class="flex flex-col items-center justify-center px-6 py-10 text-center">
+              <svg class="h-8 w-8 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+              <p class="mt-2.5 text-xs text-slate-500">Uploaded rows will appear here.</p>
+            </div>
+          </div>
+          <div id="previewMore" class="hidden border-t border-white/5 px-5 py-2.5 text-center text-[11px] text-slate-500"></div>
+        </section>
+      </div>
+
+      <!-- Right column -->
+      <div>
+        <section class="overflow-hidden rounded-3xl border border-white/[0.07] bg-[#0c0f16]/80 shadow-[0_25px_70px_-35px_rgba(0,0,0,.95)] backdrop-blur">
+          <div class="flex items-center justify-between gap-3 border-b border-white/5 px-5 py-4 sm:px-6">
+            <div class="flex items-center gap-3">
+              <span class="grid h-7 w-7 place-items-center rounded-lg border border-amber-400/20 bg-amber-400/10 font-mono text-[11px] font-semibold text-amber-300">02</span>
+              <h2 class="font-display text-base font-semibold text-white">Live draw</h2>
+            </div>
+            <span id="poolPill" class="rounded-full border border-white/[0.07] bg-white/[0.03] px-3 py-1 font-mono text-[11px] text-slate-400">0 in pool</span>
+          </div>
+
+          <div class="p-4 sm:p-6">
+            <div class="mb-2 flex items-center justify-between gap-3 px-1">
+              <div class="flex min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                <span class="text-amber-400/70">Draw reel</span>
+                <span class="text-slate-700">/</span>
+                <span id="reelSource" class="truncate normal-case tracking-normal text-slate-600">No file loaded</span>
+              </div>
+              <div class="flex shrink-0 items-center gap-1" aria-hidden="true">
+                <span class="h-1.5 w-1.5 rounded-full bg-amber-400/70 shadow-[0_0_8px_rgba(251,191,36,.6)]"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-white/10"></span>
+                <span class="h-1.5 w-1.5 rounded-full bg-white/10"></span>
+              </div>
+            </div>
+
+            <div class="reel-shell">
+              <div class="reel-inner">
+                <span class="absolute left-2.5 top-2.5 z-20 h-1.5 w-1.5 rounded-full bg-white/10" aria-hidden="true"></span>
+                <span class="absolute right-2.5 top-2.5 z-20 h-1.5 w-1.5 rounded-full bg-white/10" aria-hidden="true"></span>
+                <span class="absolute bottom-2.5 left-2.5 z-20 h-1.5 w-1.5 rounded-full bg-white/10" aria-hidden="true"></span>
+                <span class="absolute bottom-2.5 right-2.5 z-20 h-1.5 w-1.5 rounded-full bg-white/10" aria-hidden="true"></span>
+
+                <div id="reelViewport" class="relative h-[216px] overflow-hidden">
+                  <div id="reelRows" class="reel-mask absolute inset-0" aria-hidden="true"></div>
+
+                  <div class="pointer-events-none absolute inset-x-0 top-1/2 z-10 h-[72px] -translate-y-1/2 border-y border-amber-400/25 bg-gradient-to-r from-amber-400/[0.02] via-amber-400/[0.08] to-amber-400/[0.02] shadow-[inset_0_0_35px_rgba(251,191,36,.05)]">
+                    <span class="absolute left-0 top-0 h-full w-px bg-gradient-to-b from-transparent via-amber-400/50 to-transparent"></span>
+                    <span class="absolute right-0 top-0 h-full w-px bg-gradient-to-b from-transparent via-amber-400/50 to-transparent"></span>
+                  </div>
+
+                  <svg class="pointer-events-none absolute left-2 top-1/2 z-20 h-4 w-4 -translate-y-1/2 text-amber-400/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                  <svg class="pointer-events-none absolute right-2 top-1/2 z-20 h-4 w-4 -translate-y-1/2 text-amber-400/60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+
+                  <div id="reelOverlay" class="absolute inset-0 z-30 grid place-items-center bg-[#080a0f]/70 px-6 text-center backdrop-blur-[1px]">
+                    <div>
+                      <span class="mx-auto grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-slate-500">
+                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/><circle cx="12" cy="12" r="3"/></svg>
+                      </span>
+                      <p class="mt-2.5 text-sm font-medium text-slate-300">Waiting for entries</p>
+                      <p class="mt-0.5 text-[11px] text-slate-500">Upload a spreadsheet to load the reel.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3.5 flex items-center justify-between gap-3 px-1">
+              <div class="flex items-center gap-2">
+                <span id="statusDot" class="dot dot-idle" aria-hidden="true"></span>
+                <span id="statusText" class="text-xs text-slate-400" role="status" aria-live="polite">Awaiting entries</span>
+              </div>
+              <span id="roundLabel" class="font-mono text-[11px] text-slate-600">Round —</span>
+            </div>
+
+            <button id="drawBtn" type="button" disabled class="draw-btn group relative mt-4 flex h-14 w-full items-center justify-center overflow-hidden rounded-xl bg-gradient-to-r from-amber-300 via-amber-400 to-amber-500 font-display text-[15px] font-semibold tracking-wide text-[#1c1305] shadow-[0_12px_45px_-12px_rgba(251,191,36,.55)] ring-1 ring-inset ring-white/30 transition duration-200 hover:brightness-110 active:scale-[0.995] disabled:cursor-not-allowed disabled:opacity-40 disabled:saturate-50 disabled:shadow-none">
+              <span class="shimmer-sweep pointer-events-none absolute inset-0" aria-hidden="true"></span>
+              <span class="relative flex items-center justify-center gap-2">
+                <svg id="drawIcon" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>
+                <svg id="drawSpinner" class="hidden h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-opacity=".25" stroke-width="3"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+                <span id="drawBtnLabel">Draw winner</span>
+              </span>
+            </button>
+
+            <div class="mt-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+              <label class="group inline-flex cursor-pointer select-none items-center gap-2.5">
+                <input id="removeWinner" type="checkbox" class="peer sr-only" checked />
+                <span class="checkbox-box grid h-5 w-5 place-items-center rounded-md border border-white/20 bg-white/5 transition">
+                  <svg class="h-3.5 w-3.5 text-[#1c1305] opacity-0 transition" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+                </span>
+                <span class="text-sm text-slate-300 transition-colors group-hover:text-white">Remove winner from pool</span>
+              </label>
+              <div class="flex items-center gap-2">
+                <button id="resetBtn" type="button" disabled class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 text-[11px] font-medium text-slate-300 transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white disabled:cursor-not-allowed disabled:opacity-40">
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+                  Reset
+                </button>
+                <button id="clearBtn" type="button" disabled class="inline-flex h-8 items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-2.5 text-[11px] font-medium text-slate-400 transition hover:border-rose-400/30 hover:bg-rose-400/[0.06] hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-40">
+                  <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <div class="mt-5" aria-live="polite">
+              <div id="resultEmpty" class="flex items-center gap-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.015] px-4 py-4">
+                <span class="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.03] text-slate-500">
+                  <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+                </span>
+                <div>
+                  <p class="text-sm font-medium text-slate-300">No winner yet</p>
+                  <p class="text-xs text-slate-500">The winning entry will be revealed here.</p>
+                </div>
+              </div>
+
+              <div id="resultCard" class="result-card animate-pop hidden relative overflow-hidden rounded-2xl border border-amber-400/30 bg-gradient-to-br from-amber-400/[0.13] via-amber-500/[0.05] to-transparent p-5 sm:p-6">
+                <div class="pointer-events-none absolute -right-12 -top-14 h-44 w-44 rounded-full bg-amber-400/10 blur-3xl" aria-hidden="true"></div>
+                <div class="pointer-events-none absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-emerald-400/[0.06] blur-3xl" aria-hidden="true"></div>
+                <div class="relative">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-300/90">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+                      <span id="resultRound">Winner · Round 1</span>
+                    </div>
+                    <button id="copyBtn" type="button" class="inline-flex h-7 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-[10px] font-medium text-slate-300 transition hover:bg-white/[0.08] hover:text-white" title="Copy winning entry">
+                      <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                      Copy
+                    </button>
+                  </div>
+                  <p id="winnerText" class="mt-3 break-words font-display text-xl font-semibold leading-snug text-white sm:text-2xl"></p>
+                  <p id="resultMeta" class="mt-3 text-[11px] text-slate-400"></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="historyCard" class="mt-6 hidden overflow-hidden rounded-3xl border border-white/[0.07] bg-[#0c0f16]/80 shadow-[0_25px_70px_-35px_rgba(0,0,0,.95)] backdrop-blur">
+          <div class="flex items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
+            <div class="flex items-center gap-2">
+              <h2 class="font-display text-sm font-semibold text-white">Draw history</h2>
+              <span id="historyCount" class="rounded-full bg-emerald-400/10 px-2 py-0.5 font-mono text-[10px] text-emerald-300">0</span>
+            </div>
+            <span class="text-[10px] uppercase tracking-wider text-slate-600">Newest first</span>
+          </div>
+          <ol id="historyList" class="scroll-slim max-h-64 space-y-0.5 overflow-y-auto p-2"></ol>
+        </section>
+      </div>
+    </main>
+
+    <footer class="mt-8 flex flex-col items-center justify-between gap-2 border-t border-white/5 pt-5 text-[11px] text-slate-600 sm:flex-row">
+      <p>All spreadsheet processing happens locally in your browser.</p>
+      <p>Built with Tailwind CSS + SheetJS</p>
+    </footer>
+  </div>
+
+  <div id="confetti" class="pointer-events-none fixed inset-0 z-[60] overflow-hidden" aria-hidden="true"></div>
+
+  <div id="toast" class="pointer-events-none fixed inset-x-0 bottom-6 z-[70] flex translate-y-2 justify-center px-4 opacity-0 transition-all duration-300" role="status" aria-live="polite">
+    <div class="flex items-center gap-2.5 rounded-full border border-white/10 bg-[#12151d] px-4 py-2.5 text-sm text-slate-200 shadow-2xl">
+      <span id="toastDot" class="dot dot-info" aria-hidden="true"></span>
+      <span id="toastMsg"></span>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const $ = (id) => document.getElementById(id);
+      const els = {
+        fileInput: $('fileInput'),
+        dropzone: $('dropzone'),
+        dropTitle: $('dropTitle'),
+        dropHint: $('dropHint'),
+        fileStatus: $('fileStatus'),
+        fileName: $('fileName'),
+        fileMeta: $('fileMeta'),
+        clearFileBtn: $('clearFileBtn'),
+        loadedCount: $('loadedCount'),
+        poolCount: $('poolCount'),
+        previewList: $('previewList'),
+        previewEmpty: $('previewEmpty'),
+        previewCount: $('previewCount'),
+        previewMore: $('previewMore'),
+        previewScroll: $('previewScroll'),
+        poolPill: $('poolPill'),
+        reelSource: $('reelSource'),
+        reelRows: $('reelRows'),
+        reelInner: document.querySelector('.reel-inner'),
+        reelOverlay: $('reelOverlay'),
+        statusDot: $('statusDot'),
+        statusText: $('statusText'),
+        roundLabel: $('roundLabel'),
+        drawBtn: $('drawBtn'),
+        drawBtnLabel: $('drawBtnLabel'),
+        drawIcon: $('drawIcon'),
+        drawSpinner: $('drawSpinner'),
+        removeWinner: $('removeWinner'),
+        resetBtn: $('resetBtn'),
+        clearBtn: $('clearBtn'),
+        resultEmpty: $('resultEmpty'),
+        resultCard: $('resultCard'),
+        resultRound: $('resultRound'),
+        winnerText: $('winnerText'),
+        resultMeta: $('resultMeta'),
+        copyBtn: $('copyBtn'),
+        historyCard: $('historyCard'),
+        historyList: $('historyList'),
+        historyCount: $('historyCount'),
+        confetti: $('confetti'),
+        toast: $('toast'),
+        toastDot: $('toastDot'),
+        toastMsg: $('toastMsg')
+      };
+
+      const ROW_H = 72;
+      const ROW_COUNT = 9;
+      const PREVIEW_LIMIT = 400;
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      const state = {
+        original: [],
+        pool: [],
+        reel: [],
+        winners: [],
+        pos: 0,
+        drawing: false,
+        parsing: false,
+        result: null,
+        fileName: '',
+        fileSize: 0,
+        sheetName: ''
+      };
+
+      // Build the reel row pool once.
+      const reelRows = [];
+      for (let i = 0; i < ROW_COUNT; i += 1) {
+        const row = document.createElement('div');
+        row.className = 'reel-row';
+        const text = document.createElement('span');
+        text.className = 'reel-text';
+        row.appendChild(text);
+        els.reelRows.appendChild(row);
+        reelRows.push(row);
+      }
+
+      const mod = (n, m) => ((n % m) + m) % m;
+
+      function formatBytes(bytes) {
+        if (!bytes) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const value = bytes / Math.pow(1024, i);
+        return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+      }
+
+      function randomIndex(n) {
+        if (n <= 1) return 0;
+        if (window.crypto && window.crypto.getRandomValues) {
+          const max = Math.floor(0x100000000 / n) * n;
+          const buf = new Uint32Array(1);
+          let value;
+          do {
+            window.crypto.getRandomValues(buf);
+            value = buf[0];
+          } while (value >= max);
+          return value % n;
+        }
+        return Math.floor(Math.random() * n);
+      }
+
+      let toastTimer = null;
+      function showToast(message, type = 'info') {
+        els.toastMsg.textContent = message;
+        els.toastDot.className = 'dot ' + (type === 'error' ? 'dot-error' : type === 'success' ? 'dot-ready' : 'dot-info');
+        els.toast.classList.remove('opacity-0', 'translate-y-2');
+        els.toast.classList.add('opacity-100', 'translate-y-0');
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(() => {
+          els.toast.classList.add('opacity-0', 'translate-y-2');
+          els.toast.classList.remove('opacity-100', 'translate-y-0');
+        }, 3600);
+      }
+
+      function setStatus(mode) {
+        const modes = {
+          idle: { text: 'Awaiting entries', dot: 'dot dot-idle' },
+          ready: { text: 'Ready to draw', dot: 'dot dot-ready' },
+          rolling: { text: 'Rolling…', dot: 'dot dot-rolling' },
+          done: { text: 'Winner locked', dot: 'dot dot-ready' }
+        };
+        const current = modes[mode] || modes.idle;
+        els.statusText.textContent = current.text;
+        els.statusDot.className = current.dot;
+      }
+
+      function updateRoundLabel() {
+        if (state.drawing) {
+          els.roundLabel.textContent = `Round ${state.winners.length + 1}`;
+        } else if (state.winners.length) {
+          els.roundLabel.textContent = `Round ${state.winners.length}`;
+        } else {
+          els.roundLabel.textContent = 'Round —';
+        }
+      }
+
+      function renderReel() {
+        const n = state.reel.length;
+        if (!n) {
+          for (const row of reelRows) {
+            const text = row.firstElementChild;
+            text.textContent = '';
+            text.removeAttribute('title');
+            row.style.opacity = '0';
+          }
+          return;
+        }
+
+        const base = Math.floor(state.pos);
+        const half = Math.floor(ROW_COUNT / 2);
+
+        for (let j = 0; j < reelRows.length; j += 1) {
+          const row = reelRows[j];
+          const text = row.firstElementChild;
+          const index = base - half + j;
+          const entry = state.reel[mod(index, n)];
+
+          if (text.textContent !== entry) {
+            text.textContent = entry;
+            text.title = entry;
+          }
+
+          const delta = index - state.pos;
+          row.style.transform = `translate3d(0, calc(-50% + ${(delta * ROW_H).toFixed(2)}px), 0)`;
+          row.style.opacity = String(Math.max(0.16, 1 - Math.abs(delta) * 0.24));
+        }
+      }
+
+      function renderPreview() {
+        const list = state.pool;
+        els.previewList.replaceChildren();
+        els.previewScroll.scrollTop = 0;
+        els.previewCount.textContent = String(list.length);
+        els.previewEmpty.classList.toggle('hidden', list.length > 0);
+
+        if (!list.length) {
+          els.previewMore.classList.add('hidden');
+          return;
+        }
+
+        const shown = Math.min(list.length, PREVIEW_LIMIT);
+        const fragment = document.createDocumentFragment();
+        for (let i = 0; i < shown; i += 1) {
+          const li = document.createElement('li');
+          li.className = 'flex items-start gap-3 rounded-lg px-2.5 py-2 transition-colors hover:bg-white/[0.035]';
+
+          const num = document.createElement('span');
+          num.className = 'mt-0.5 w-7 shrink-0 text-right font-mono text-[10px] leading-5 text-slate-600';
+          num.textContent = String(i + 1).padStart(2, '0');
+
+          const text = document.createElement('span');
+          text.className = 'min-w-0 flex-1 break-words text-[13px] leading-5 text-slate-300';
+          text.textContent = list[i];
+
+          li.append(num, text);
+          fragment.appendChild(li);
+        }
+        els.previewList.appendChild(fragment);
+
+        if (list.length > PREVIEW_LIMIT) {
+          els.previewMore.textContent = `Showing first ${PREVIEW_LIMIT} of ${list.length.toLocaleString()} entries`;
+          els.previewMore.classList.remove('hidden');
+        } else {
+          els.previewMore.classList.add('hidden');
+        }
+      }
+
+      function renderFileInfo() {
+        const hasData = state.original.length > 0;
+        els.fileStatus.classList.toggle('hidden', !hasData);
+        els.fileName.textContent = state.fileName || '—';
+        els.fileMeta.textContent = hasData
+          ? `${state.sheetName} · ${state.original.length.toLocaleString()} ${state.original.length === 1 ? 'entry' : 'entries'} · ${formatBytes(state.fileSize)}`
+          : '';
+        els.dropTitle.textContent = hasData ? 'Drop a new file here' : 'Drop your file here';
+        els.dropHint.textContent = hasData
+          ? 'Replaces the current pool and draw history'
+          : '.xlsx, .xls or .csv · first sheet only';
+        els.reelSource.textContent = hasData ? state.fileName : 'No file loaded';
+        els.reelSource.title = hasData ? state.fileName : '';
+        els.loadedCount.textContent = state.original.length.toLocaleString();
+        els.poolCount.textContent = state.pool.length.toLocaleString();
+      }
+
+      function renderHistory() {
+        const hasWinners = state.winners.length > 0;
+        els.historyCard.classList.toggle('hidden', !hasWinners);
+        els.historyCount.textContent = String(state.winners.length);
+        els.historyList.replaceChildren();
+        els.historyList.scrollTop = 0;
+        if (!hasWinners) return;
+
+        const fragment = document.createDocumentFragment();
+        for (let i = state.winners.length - 1; i >= 0; i -= 1) {
+          const item = state.winners[i];
+          const li = document.createElement('li');
+          li.className = 'flex items-start gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/[0.03]';
+
+          const badge = document.createElement('span');
+          badge.className = 'mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border border-emerald-400/20 bg-emerald-400/10 font-mono text-[10px] font-medium text-emerald-300';
+          badge.textContent = String(item.round).padStart(2, '0');
+
+          const body = document.createElement('div');
+          body.className = 'min-w-0 flex-1';
+
+          const text = document.createElement('p');
+          text.className = 'break-words text-sm leading-5 text-slate-200';
+          text.textContent = item.entry;
+
+          const meta = document.createElement('p');
+          meta.className = 'mt-0.5 text-[11px] text-slate-500';
+          meta.textContent = `Round ${item.round} · ${item.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+
+          body.append(text, meta);
+          li.append(badge, body);
+          fragment.appendChild(li);
+        }
+        els.historyList.appendChild(fragment);
+      }
+
+      function updateDrawButton() {
+        const canDraw = !state.drawing && !state.parsing && state.pool.length > 0;
+        els.drawBtn.disabled = !canDraw;
+        els.drawBtn.setAttribute('aria-busy', state.drawing ? 'true' : 'false');
+
+        if (state.drawing) {
+          els.drawBtnLabel.textContent = 'Rolling…';
+          els.drawIcon.classList.add('hidden');
+          els.drawSpinner.classList.remove('hidden');
+          return;
+        }
+
+        els.drawIcon.classList.remove('hidden');
+        els.drawSpinner.classList.add('hidden');
+
+        if (state.parsing) {
+          els.drawBtnLabel.textContent = 'Reading file…';
+        } else if (state.pool.length === 0 && state.original.length > 0) {
+          els.drawBtnLabel.textContent = 'Pool empty';
+        } else {
+          els.drawBtnLabel.textContent = 'Draw winner';
+        }
+      }
+
+      function updateControls() {
+        const busy = state.drawing || state.parsing;
+        els.removeWinner.disabled = busy;
+        els.resetBtn.disabled = busy || state.original.length === 0;
+        els.clearBtn.disabled = busy || (state.original.length === 0 && !state.fileName);
+        els.clearFileBtn.disabled = busy;
+        els.fileInput.disabled = busy;
+        els.dropzone.classList.toggle('pointer-events-none', busy);
+        els.dropzone.classList.toggle('opacity-60', busy);
+      }
+
+      function hideResult() {
+        els.resultCard.classList.add('hidden');
+        els.resultCard.classList.remove('animate-pop');
+        els.resultEmpty.classList.remove('hidden');
+      }
+
+      function showResult() {
+        if (!state.result) {
+          hideResult();
+          return;
+        }
+        els.resultEmpty.classList.add('hidden');
+        els.resultCard.classList.remove('hidden');
+        els.resultRound.textContent = `Winner · Round ${state.result.round}`;
+        els.winnerText.textContent = state.result.entry;
+        els.resultMeta.textContent = `Drawn at ${state.result.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+        els.resultCard.classList.remove('animate-pop');
+        void els.resultCard.offsetWidth;
+        els.resultCard.classList.add('animate-pop');
+      }
+
+      function renderAll() {
+        renderFileInfo();
+        renderPreview();
+        renderReel();
+        renderHistory();
+        updateDrawButton();
+        updateRoundLabel();
+        els.poolPill.textContent = `${state.pool.length.toLocaleString()} in pool`;
+        els.reelOverlay.classList.toggle('hidden', state.original.length > 0);
+      }
+
+      async function startDraw() {
+        if (state.drawing || state.parsing || state.pool.length === 0) return;
+
+        state.drawing = true;
+        state.result = null;
+        state.reel = state.pool.slice();
+
+        const n = state.reel.length;
+        const winnerIndex = randomIndex(n);
+        const winner = state.reel[winnerIndex];
+
+        hideResult();
+        setStatus('rolling');
+        updateRoundLabel();
+        updateDrawButton();
+        updateControls();
+        els.reelInner.classList.remove('locked');
+
+        const distance = prefersReducedMotion ? 10 : 62 + Math.random() * 26;
+        const startPos = winnerIndex - distance;
+        const duration = prefersReducedMotion ? 550 : 3600 + Math.random() * 900;
+        state.pos = startPos;
+        renderReel();
+
+        const startTime = performance.now();
+        const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+        await new Promise((resolve) => {
+          function step(now) {
+            const t = Math.min(1, (now - startTime) / duration);
+            state.pos = startPos + (winnerIndex - startPos) * easeOutCubic(t);
+            renderReel();
+            if (t < 1) {
+              window.requestAnimationFrame(step);
+            } else {
+              resolve();
+            }
+          }
+          window.requestAnimationFrame(step);
+        });
+
+        state.pos = winnerIndex;
+        renderReel();
+        state.drawing = false;
+        finishDraw(winnerIndex, winner);
+      }
+
+      function finishDraw(winnerIndex, winner) {
+        const round = state.winners.length + 1;
+        const at = new Date();
+
+        state.winners.push({ round, entry: winner, at });
+        state.result = { round, entry: winner, at };
+
+        if (els.removeWinner.checked) {
+          if (state.pool[winnerIndex] === winner) {
+            state.pool.splice(winnerIndex, 1);
+          } else {
+            const found = state.pool.indexOf(winner);
+            if (found !== -1) state.pool.splice(found, 1);
+          }
+        }
+
+        setStatus('done');
+        renderAll();
+        updateControls();
+        showResult();
+
+        els.reelInner.classList.remove('locked');
+        void els.reelInner.offsetWidth;
+        els.reelInner.classList.add('locked');
+
+        if (!prefersReducedMotion) burstConfetti();
+
+        if (state.pool.length === 0) {
+          showToast('Pool is empty — reset to restore the original entries.', 'info');
+        }
+      }
+
+      function burstConfetti() {
+        const colors = ['#fbbf24', '#f59e0b', '#fde68a', '#34d399', '#60a5fa', '#f472b6'];
+        els.confetti.replaceChildren();
+
+        for (let i = 0; i < 70; i += 1) {
+          const piece = document.createElement('span');
+          piece.className = 'confetti-piece';
+          piece.style.left = `${Math.random() * 100}vw`;
+          piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+          piece.style.width = `${5 + Math.random() * 6}px`;
+          piece.style.height = `${8 + Math.random() * 8}px`;
+          piece.style.animationDelay = `${Math.random() * 0.25}s`;
+          piece.style.animationDuration = `${1.8 + Math.random() * 1.4}s`;
+          piece.style.setProperty('--drift', `${Math.random() * 220 - 110}px`);
+          els.confetti.appendChild(piece);
+          window.setTimeout(() => piece.remove(), 4200);
+        }
+      }
+
+      function resetPool() {
+        if (state.drawing || state.parsing || state.original.length === 0) return;
+
+        state.pool = state.original.slice();
+        state.reel = state.original.slice();
+        state.winners = [];
+        state.result = null;
+        state.pos = 0;
+
+        hideResult();
+        setStatus('ready');
+        els.reelInner.classList.remove('locked');
+        renderAll();
+        updateControls();
+        showToast('Pool restored to the original entries.', 'success');
+      }
+
+      function clearAll() {
+        if (state.drawing || state.parsing) return;
+        if (state.original.length > 0 && !window.confirm('Clear the loaded file and all draw history?')) return;
+
+        state.original = [];
+        state.pool = [];
+        state.reel = [];
+        state.winners = [];
+        state.result = null;
+        state.pos = 0;
+        state.fileName = '';
+        state.fileSize = 0;
+        state.sheetName = '';
+
+        els.fileInput.value = '';
+        hideResult();
+        setStatus('idle');
+        els.reelInner.classList.remove('locked');
+        renderAll();
+        updateControls();
+      }
+
+      async function handleFile(file) {
+        if (!file || state.drawing || state.parsing) return;
+
+        const extension = (file.name.split('.').pop() || '').toLowerCase();
+        if (!['xlsx', 'xls', 'csv'].includes(extension)) {
+          showToast('Please choose an .xlsx, .xls, or .csv file.', 'error');
+          return;
+        }
+
+        if (typeof window.XLSX === 'undefined') {
+          showToast('Spreadsheet parser failed to load. Check your connection and refresh.', 'error');
+          return;
+        }
+
+        state.parsing = true;
+        updateDrawButton();
+        updateControls();
+        els.dropTitle.textContent = 'Reading file…';
+        els.dropHint.textContent = 'Parsing the first sheet locally';
+
+        await new Promise((resolve) => window.setTimeout(resolve, 40));
+
+        try {
+          const buffer = await file.arrayBuffer();
+          const workbook = window.XLSX.read(buffer, { type: 'array' });
+
+          if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+            throw new Error('Workbook has no sheets');
+          }
+
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          const rows = window.XLSX.utils.sheet_to_json(sheet, {
+            header: 1,
+            defval: '',
+            raw: false,
+            blankrows: false
+          });
+
+          const entries = [];
+          for (const row of rows) {
+            if (!Array.isArray(row)) continue;
+            const cells = row
+              .map((cell) => String(cell ?? '').replace(/\s+/g, ' ').trim())
+              .filter(Boolean);
+            if (cells.length) entries.push(cells.join(' | '));
+          }
+
+          if (entries.length === 0) {
+            showToast('No usable rows found in the first sheet.', 'error');
+            return;
+          }
+
+          state.original = entries;
+          state.pool = entries.slice();
+          state.reel = entries.slice();
+          state.winners = [];
+          state.result = null;
+          state.pos = 0;
+          state.fileName = file.name;
+          state.fileSize = file.size;
+          state.sheetName = sheetName;
+
+          hideResult();
+          setStatus('ready');
+          renderAll();
+          showToast(`Loaded ${entries.length.toLocaleString()} ${entries.length === 1 ? 'entry' : 'entries'}.`, 'success');
+        } catch (error) {
+          console.error(error);
+          showToast('Could not read that file. Try another spreadsheet.', 'error');
+        } finally {
+          state.parsing = false;
+          updateDrawButton();
+          updateControls();
+          renderFileInfo();
+        }
+      }
+
+      async function copyResult() {
+        if (!state.result) return;
+        const text = state.result.entry;
+
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast('Winning entry copied.', 'success');
+          return;
+        } catch (error) {
+          // Fall through to the legacy copy path.
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+
+        try {
+          document.execCommand('copy');
+          showToast('Winning entry copied.', 'success');
+        } catch (error) {
+          showToast('Copy failed — select the text manually.', 'error');
+        } finally {
+          textarea.remove();
+        }
+      }
+
+      // File selection
+      els.fileInput.addEventListener('change', () => {
+        const file = els.fileInput.files && els.fileInput.files[0];
+        if (file) void handleFile(file);
+        els.fileInput.value = '';
+      });
+
+      // Drag and drop
+      let dragDepth = 0;
+
+      els.dropzone.addEventListener('dragenter', (event) => {
+        event.preventDefault();
+        if (state.drawing || state.parsing) return;
+        dragDepth += 1;
+        els.dropzone.classList.add('drag-over');
+      });
+
+      els.dropzone.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        if (!state.drawing && !state.parsing) els.dropzone.classList.add('drag-over');
+      });
+
+      els.dropzone.addEventListener('dragleave', (event) => {
+        event.preventDefault();
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) els.dropzone.classList.remove('drag-over');
+      });
+
+      els.dropzone.addEventListener('drop', (event) => {
+        event.preventDefault();
+        dragDepth = 0;
+        els.dropzone.classList.remove('drag-over');
+        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file) void handleFile(file);
+      });
+
+      window.addEventListener('dragover', (event) => event.preventDefault());
+      window.addEventListener('drop', (event) => {
+        event.preventDefault();
+        dragDepth = 0;
+        els.dropzone.classList.remove('drag-over');
+      });
+
+      // Controls
+      els.drawBtn.addEventListener('click', () => void startDraw());
+      els.resetBtn.addEventListener('click', resetPool);
+      els.clearBtn.addEventListener('click', clearAll);
+      els.clearFileBtn.addEventListener('click', clearAll);
+      els.copyBtn.addEventListener('click', () => void copyResult());
+
+      // Init
+      renderAll();
+      updateControls();
+      setStatus('idle');
+    })();
+  </script>
+</body>
+</html>
